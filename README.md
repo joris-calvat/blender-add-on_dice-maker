@@ -30,7 +30,7 @@ Un add-on Blender pour créer des dés personnalisés en utilisant des fichiers 
    - Sur **Linux** : 
      ```bash
      cd blender-add-on_dice-maker
-     zip -r dice-maker.zip . -x "*.git*" -x "__pycache__/*" -x "*.pyc"
+     zip -r dice-maker.zip . -x "*.git*" -x "__pycache__/*" -x "*.pyc" -x "*.png"
      ```
    
    **Important** : Le fichier ZIP doit contenir directement les fichiers Python (`__init__.py`, `dice_maker_panel.py`, etc.) à la racine du ZIP, pas dans un sous-dossier. Si vous créez le ZIP manuellement, assurez-vous de sélectionner les fichiers directement, pas le dossier parent.
