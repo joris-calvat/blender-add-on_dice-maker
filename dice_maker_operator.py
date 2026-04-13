@@ -119,7 +119,7 @@ class DICE_MAKER_OT_create_dice(Operator):
             bpy.data.objects.remove(bpy.data.objects[sphere_rounding_name], do_unlink=True)
 
         # Ajouter une sphere pour arrondir les coins
-        bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, enter_editmode=False, align='WORLD', location=(0, 0, 0), scale=(1, 1, 1))
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=256, ring_count=128, enter_editmode=False, align='WORLD', location=(0, 0, 0), scale=(1, 1, 1))
         sphere = context.active_object
         sphere.name = sphere_rounding_name
         sphere.select_set(True)

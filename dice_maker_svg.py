@@ -198,7 +198,7 @@ def _postprocess_imported_objects(context, new_objects, object_name, cube_size, 
         context.view_layer.objects.active = obj
         
         # Calculer la translation vers le haut : (cube_size / 2) + (cube_size / 1000)
-        translation_z = (cube_size / 2.0) + (cube_size / 1000.0)
+        translation_z = (cube_size / 2.0) + (cube_size / 500.0)
         
         # Passer en mode édition
         bpy.ops.object.mode_set(mode='EDIT')

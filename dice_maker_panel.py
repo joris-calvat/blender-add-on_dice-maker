@@ -173,42 +173,42 @@ class DiceMakerProperties(PropertyGroup):
         description="Résolution pour la face 1 (1 à 10)",
         default=5,
         min=1,
-        max=10
+        max=30
     )
     resolution_2: IntProperty(
         name="Résolution Face 2",
         description="Résolution pour la face 2 (1 à 10)",
         default=5,
         min=1,
-        max=10
+        max=30
     )
     resolution_3: IntProperty(
         name="Résolution Face 3",
         description="Résolution pour la face 3 (1 à 10)",
         default=5,
         min=1,
-        max=10
+        max=30
     )
     resolution_4: IntProperty(
         name="Résolution Face 4",
         description="Résolution pour la face 4 (1 à 10)",
         default=5,
         min=1,
-        max=10
+        max=30
     )
     resolution_5: IntProperty(
         name="Résolution Face 5",
         description="Résolution pour la face 5 (1 à 10)",
         default=5,
         min=1,
-        max=10
+        max=30
     )
     resolution_6: IntProperty(
         name="Résolution Face 6",
         description="Résolution pour la face 6 (1 à 10)",
         default=5,
         min=1,
-        max=10
+        max=30
     )
 
 
