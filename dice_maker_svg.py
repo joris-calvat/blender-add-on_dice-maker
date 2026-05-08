@@ -146,9 +146,6 @@ def _preprocess_imported_objects(context, new_objects, final_size, cube_size, de
         depth: Coefficient de profondeur
         resolution: Résolution pour l'objet (1 à 10)
     """
-    # Calculer l'épaisseur : (cube_size / 2) * depth
-    thickness = (cube_size / 2.0) * depth
-    
     for obj in new_objects:
         # Sélectionner l'objet
         obj.select_set(True)
@@ -167,9 +164,6 @@ def _preprocess_imported_objects(context, new_objects, final_size, cube_size, de
         # Redimensionner l'objet pour correspondre à la taille finale
         _resize_object_to_cube_size(context, obj, final_size)
         
-        # Ajouter le modificateur SOLIDIFY
-        _add_solidify_modifier(obj, thickness)
-        
         # S'assurer que l'objet est sélectionné et actif pour la conversion
         obj.select_set(True)
         context.view_layer.objects.active = obj
@@ -181,7 +175,7 @@ def _preprocess_imported_objects(context, new_objects, final_size, cube_size, de
         obj.select_set(False)
 
 
-def _postprocess_imported_objects(context, new_objects, object_name, cube_size, face_number):
+def _postprocess_imported_objects(context, new_objects, object_name, cube_size, face_number, depth, extrusion_scale):
     """
     Post-traite les objets importés après conversion en mesh : translation, rotation, nom.
     
@@ -191,13 +185,15 @@ def _postprocess_imported_objects(context, new_objects, object_name, cube_size, 
         object_name: Nom de base pour les objets
         cube_size: Taille du cube
         face_number: Numéro de la face pour déterminer la rotation (1-6)
+        depth: Coefficient de profondeur pour l'extrusion
+        extrusion_scale: Facteur global de redimensionnement de l'extrusion (XY)
     """
     for obj in new_objects:
         # Sélectionner l'objet
         obj.select_set(True)
         context.view_layer.objects.active = obj
         
-        # Calculer la translation vers le haut : (cube_size / 2) + (cube_size / 1000)
+        # Positionner le dessin tres legerement a l'interieur de la surface du de.
         translation_z = (cube_size / 2.0) + (cube_size / 500.0)
         
         # Passer en mode édition
@@ -205,9 +201,23 @@ def _postprocess_imported_objects(context, new_objects, object_name, cube_size, 
         
         # Sélectionner tout
         bpy.ops.mesh.select_all(action='SELECT')
-        
-        # Faire la translation vers le haut (axe Z)
+
+        # Extruder vers -Z local pour pousser la gravure vers l'interieur du de.
+        thickness = (cube_size / 2.0) * depth
+        bpy.ops.mesh.extrude_region_move(
+            TRANSFORM_OT_translate={"value": (0.0, 0.0, -thickness)}
+        )
+
+        # Redimensionner uniquement la region extrudee (selection courante).
+        if extrusion_scale != 1.0:
+            bpy.ops.transform.resize(value=(extrusion_scale, extrusion_scale, 1.0))
+
+        # Re-selectionner tout pour deplacer la forme complete vers la face du de.
+        bpy.ops.mesh.select_all(action='SELECT')
         bpy.ops.transform.translate(value=(0.0, 0.0, translation_z))
+
+        # Recalculer les normales vers l'exterieur pour fiabiliser la soustraction boolean.
+        bpy.ops.mesh.normals_make_consistent(inside=False)
         
         # Sortir du mode édition
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -227,7 +237,7 @@ def _postprocess_imported_objects(context, new_objects, object_name, cube_size, 
             obj.name = f"{object_name}_{idx + 1}"
 
 
-def import_svg(context, filepath, face_number, size_factor, cube_size, depth, resolution):
+def import_svg(context, filepath, face_number, size_factor, cube_size, depth, resolution, extrusion_scale):
     """
     Importe un fichier SVG dans Blender.
     Si un SVG avec le même nom est déjà chargé, il sera supprimé avant l'import.
@@ -240,6 +250,7 @@ def import_svg(context, filepath, face_number, size_factor, cube_size, depth, re
         cube_size: Taille du cube (sera multipliée par size_factor)
         depth: Coefficient de profondeur pour le modificateur SOLIDIFY
         resolution: Résolution pour l'objet (1 à 10)
+        extrusion_scale: Facteur global de redimensionnement de l'extrusion
     
     Returns:
         L'objet importé si succès, None sinon
@@ -444,7 +455,7 @@ def organize_objects_on_x_axis(context, dice_obj, print_copies, spacing=0.1, pla
         current_x += copy_width + spacing
 
 
-def finalize_imported_objects(context, imported_objects, cube_size):
+def finalize_imported_objects(context, imported_objects, cube_size, depth, extrusion_scale):
     """
     Finalise les objets importés : translation, rotation, nom.
     
@@ -452,6 +463,8 @@ def finalize_imported_objects(context, imported_objects, cube_size):
         context: Le contexte Blender
         imported_objects: Liste des objets importés avec leurs informations (obj, face_number, object_name)
         cube_size: Taille du cube
+        depth: Coefficient de profondeur pour l'extrusion
+        extrusion_scale: Facteur global de redimensionnement de l'extrusion
     """
     for obj_info in imported_objects:
         obj = obj_info['object']
@@ -460,10 +473,12 @@ def finalize_imported_objects(context, imported_objects, cube_size):
         new_objects = {obj}
         
         # Post-traiter les objets importés (translation, rotation, nom)
-        _postprocess_imported_objects(context, new_objects, object_name, cube_size, face_number)
+        _postprocess_imported_objects(
+            context, new_objects, object_name, cube_size, face_number, depth, extrusion_scale
+        )
 
 
-def import_all_svgs(context, svg_files, size_factors, cube_size, depth, resolutions):
+def import_all_svgs(context, svg_files, size_factors, cube_size, depth, resolutions, extrusion_scale=1.0):
     """
     Importe une liste de fichiers SVG.
     
@@ -474,6 +489,7 @@ def import_all_svgs(context, svg_files, size_factors, cube_size, depth, resoluti
         cube_size: Taille du cube (sera multipliée par chaque size_factor)
         depth: Coefficient de profondeur pour le modificateur SOLIDIFY
         resolutions: Liste des résolutions pour chaque face (1 à 10)
+        extrusion_scale: Facteur global de redimensionnement de l'extrusion (defaut 1.0)
     
     Returns:
         Tuple (liste des dictionnaires avec les objets et leurs infos, liste des erreurs)
@@ -489,7 +505,9 @@ def import_all_svgs(context, svg_files, size_factors, cube_size, depth, resoluti
                 size_factor = size_factors[i] if i < len(size_factors) else 0.5
                 # Récupérer la résolution correspondante (par défaut 5 si non défini)
                 resolution = resolutions[i] if i < len(resolutions) else 5
-                obj = import_svg(context, svg_file, i + 1, size_factor, cube_size, depth, resolution)
+                obj = import_svg(
+                    context, svg_file, i + 1, size_factor, cube_size, depth, resolution, extrusion_scale
+                )
                 if obj:
                     object_name = f"dice_face_{i + 1}"
                     imported_objects.append({

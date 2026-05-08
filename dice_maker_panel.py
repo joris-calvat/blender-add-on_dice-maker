@@ -130,6 +130,18 @@ class DiceMakerProperties(PropertyGroup):
         step=5,
         precision=2
     )
+
+    # Facteur global de redimensionnement de l'extrusion (appliqué à toutes les faces)
+    extrusion_scale: FloatProperty(
+        name="Extrusion Scale",
+        description="Facteur global appliqué a toutes les faces apres extrusion (1 = inchange)",
+        default=1.0,
+        min=0.1,
+        max=3.0,
+        soft_min=0.5,
+        soft_max=1.5,
+        precision=3
+    )
     
     # Option pour obtenir les dessins à imprimer
     print_drawings: BoolProperty(
@@ -267,6 +279,7 @@ class DICE_MAKER_PT_panel(Panel):
         
         # Variable de profondeur
         layout.prop(props, "depth", text="Depth")
+        layout.prop(props, "extrusion_scale", text="Extrusion Scale")
         
         layout.separator()
         

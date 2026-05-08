@@ -55,10 +55,11 @@ class DICE_MAKER_OT_create_dice(Operator):
         
         # Récupérer la profondeur
         depth = props.depth
+        extrusion_scale = props.extrusion_scale
         
         # Importer tous les fichiers SVG
         imported_objects_info, errors = dice_maker_svg.import_all_svgs(
-            context, svg_files, size_factors, cube_size, depth, resolutions
+            context, svg_files, size_factors, cube_size, depth, resolutions, extrusion_scale
         )
         
         # Afficher les erreurs s'il y en a
@@ -80,7 +81,9 @@ class DICE_MAKER_OT_create_dice(Operator):
         
         # Finaliser les objets importés (translation, rotation, nom)
         if imported_objects_info:
-            dice_maker_svg.finalize_imported_objects(context, imported_objects_info, cube_size)
+            dice_maker_svg.finalize_imported_objects(
+                context, imported_objects_info, cube_size, depth, extrusion_scale
+            )
         
         # Extraire la liste des objets pour les modificateurs booléens
         imported_objects = [info['object'] for info in imported_objects_info] if imported_objects_info else []

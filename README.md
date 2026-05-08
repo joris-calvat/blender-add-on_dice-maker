@@ -72,6 +72,23 @@ Un add-on Blender pour créer des dés personnalisés en utilisant des fichiers 
 5. Ajustez les paramètres selon vos besoins
 6. Cliquez sur "Créer le dé" pour générer votre dé personnalisé
 
+## Paramètres disponibles
+
+Voici les paramètres configurables dans le panneau `Dice Maker` :
+
+- **Face 1 à Face 6 (fichiers SVG)** : chemin de chaque dessin à appliquer sur les 6 faces du dé.
+- **Size (par face)** : facteur de taille du SVG sur chaque face (`0.2` à `0.8`, défaut `0.5`).
+- **Resolution (par face)** : résolution de la courbe SVG avant conversion en mesh (`1` à `30`, défaut `5`).
+- **Depth** : profondeur de gravure/extrusion des dessins (`0.05` à `0.3`, défaut `0.2`).
+- **Extrusion Scale** : facteur global appliqué à la partie extrudée de toutes les faces (`0.1` à `3.0`, défaut `1.0`).
+  - `1.0` : pas de redimensionnement
+  - `> 1.0` : extrusion élargie
+  - `< 1.0` : extrusion réduite
+- **Size (global)** : taille globale du dé et des copies éventuelles (`0.1` à `10.0`, défaut `1.6`).
+- **Sphere Rounding Size** : taille de la sphère utilisée pour arrondir les coins (`1.3` à `1.5`, défaut `1.37`).
+- **Dice Face Height %** : pourcentage de hauteur appliqué aux copies destinées à l'impression (`50` à `100`, défaut `85`).
+- **Print Drawings** : crée des copies des dessins (faces) pour l'impression.
+
 ## Désinstallation
 
 1. Ouvrez Blender
