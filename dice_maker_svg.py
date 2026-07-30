@@ -54,6 +54,32 @@ def _get_imported_objects_from_collection(context, collection_name, objects_befo
     return None
 
 
+def _join_imported_objects_into_one(context, new_objects):
+    """
+    Fusionne plusieurs objets issus d'un meme import SVG (path, path.001, etc.)
+    en un seul objet, avant conversion / mise a l'echelle.
+    Sinon le code ne suivait que le premier objet : les autres restaient dans la scene.
+    """
+    objs = [o for o in new_objects if o and o.name in bpy.data.objects]
+    if not objs:
+        return None
+    if len(objs) == 1:
+        objs[0].select_set(False)
+        return objs[0]
+
+    if context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in objs:
+        obj.select_set(True)
+    context.view_layer.objects.active = objs[0]
+    bpy.ops.object.join()
+    merged = context.view_layer.objects.active
+    merged.select_set(False)
+    return merged
+
+
 def _resize_object_to_cube_size(context, obj, cube_size=2.0):
     """
     Redimensionne un objet pour que sa dimension maximale (largeur ou hauteur) 
@@ -291,12 +317,15 @@ def import_svg(context, filepath, face_number, size_factor, cube_size, depth, re
         
         # Calculer la taille finale : cube_size * size_factor
         final_size = cube_size * size_factor
-        
-        # Prétraiter les objets importés (jusqu'à la conversion en mesh)
-        _preprocess_imported_objects(context, new_objects, final_size, cube_size, depth, resolution)
-        
-        # Retourner le premier objet créé
-        return next(iter(new_objects))
+
+        # Fusionner tous les sous-chemins du SVG avant traitement ; un seul objet par face ensuite.
+        merged_obj = _join_imported_objects_into_one(context, new_objects)
+        if not merged_obj:
+            return None
+
+        _preprocess_imported_objects(context, {merged_obj}, final_size, cube_size, depth, resolution)
+
+        return merged_obj
     except Exception as e:
         raise Exception(f"Erreur lors de l'import de {abs_filepath}: {str(e)}")
 
