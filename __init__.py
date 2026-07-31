@@ -16,8 +16,10 @@ from . import dice_maker_panel
 from . import dice_maker_operator
 from . import dice_maker_svg
 from . import dice_maker_bevel
+from . import dice_maker_ui
 
 _SUBMODULES = (
+    "dice_maker_ui",
     "dice_maker_svg",
     "dice_maker_bevel",
     "dice_maker_panel",
@@ -27,7 +29,7 @@ _SUBMODULES = (
 
 def _refresh_submodules():
     """Reload submodules safely (hyphenated package + Reload Scripts)."""
-    global dice_maker_svg, dice_maker_bevel, dice_maker_panel, dice_maker_operator
+    global dice_maker_ui, dice_maker_svg, dice_maker_bevel, dice_maker_panel, dice_maker_operator
     pkg = __name__
     refreshed = []
     for name in _SUBMODULES:
@@ -44,6 +46,7 @@ def _refresh_submodules():
         refreshed.append(mod)
 
     (
+        dice_maker_ui,
         dice_maker_svg,
         dice_maker_bevel,
         dice_maker_panel,

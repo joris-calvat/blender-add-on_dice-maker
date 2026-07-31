@@ -117,30 +117,37 @@ class DiceMakerProperties(PropertyGroup):
         precision=2
     )
     
-    # Variable de profondeur (0.1 à 0.3, pas de 0.05)
-    # Note: step est en pourcentage de la plage, donc pour 0.05 sur une plage de 0.2 = 25%
-    depth: FloatProperty(
-        name="Profondeur",
-        description="Profondeur pour les objets SVG (0.1 à 0.3, pas de 0.05)",
-        default=0.2,
-        min=0.05,
-        max=0.3,
-        soft_min=0.05,
-        soft_max=0.3,
-        step=5,
-        precision=2
+    # Bevel volume (gravure SVG)
+    base_height: FloatProperty(
+        name="Base Height",
+        description="Hauteur du corps sans bevel (0 = biseau dès le bas)",
+        default=0.05,
+        min=0.0,
+        max=2.0,
+        soft_min=0.0,
+        soft_max=0.5,
+        precision=3,
+        subtype="DISTANCE",
     )
-
-    # Facteur global de redimensionnement de l'extrusion (appliqué à toutes les faces)
-    extrusion_scale: FloatProperty(
-        name="Extrusion Scale",
-        description="Facteur global appliqué a toutes les faces apres extrusion (1 = inchange)",
-        default=1.0,
-        min=0.1,
-        max=3.0,
-        soft_min=0.5,
-        soft_max=1.5,
-        precision=3
+    bevel_angle: FloatProperty(
+        name="Bevel Angle",
+        description="Angle du bevel depuis l'horizontale (1°≈plat, 45°=chanfrein)",
+        default=45.0,
+        min=1.0,
+        max=89.0,
+        soft_min=15.0,
+        soft_max=75.0,
+    )
+    bevel_height: FloatProperty(
+        name="Bevel Height",
+        description="Hauteur verticale du biseau (0 = prisme sans bevel)",
+        default=0.15,
+        min=0.0,
+        max=2.0,
+        soft_min=0.0,
+        soft_max=0.5,
+        precision=3,
+        subtype="DISTANCE",
     )
     
     # Option pour obtenir les dessins à imprimer
@@ -276,13 +283,13 @@ class DICE_MAKER_PT_panel(Panel):
         row.prop(props, "resolution_6", text="Resolution")
 
         layout.separator()
-        
-        # Variable de profondeur
-        layout.prop(props, "depth", text="Depth")
-        layout.prop(props, "extrusion_scale", text="Extrusion Scale")
-        
+        layout.label(text="Bevel")
+        layout.prop(props, "base_height", text="Base Height")
+        layout.prop(props, "bevel_angle", text="Angle")
+        layout.prop(props, "bevel_height", text="Bevel Height")
+
         layout.separator()
-        
+
         # Taille globale
         layout.prop(props, "size", text="Size")
         

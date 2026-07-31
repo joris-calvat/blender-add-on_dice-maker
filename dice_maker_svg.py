@@ -4,6 +4,9 @@ import os
 import math
 from mathutils import Vector, Euler
 
+from . import dice_maker_bevel
+from . import dice_maker_ui as ui
+
 
 def _cleanup_existing_object(object_name):
     """Supprime l'objet existant avec le nom donné s'il existe"""
@@ -160,102 +163,117 @@ def _get_face_rotation(face_number):
     return rotations.get(face_number, (0.0, 0.0, 0.0))
 
 
-def _preprocess_imported_objects(context, new_objects, final_size, cube_size, depth, resolution):
-    """
-    Prétraite les objets importés jusqu'à la conversion en mesh : origine, position, redimensionnement, résolution, modificateur.
-    
-    Args:
-        context: Le contexte Blender
-        new_objects: Set des objets à traiter
-        final_size: Taille finale pour le redimensionnement (cube_size * size_factor)
-        cube_size: Taille du cube
-        depth: Coefficient de profondeur
-        resolution: Résolution pour l'objet (1 à 10)
-    """
-    for obj in new_objects:
-        # Sélectionner l'objet
-        obj.select_set(True)
-        context.view_layer.objects.active = obj
-        
-        # Remettre l'origine de la géométrie au centre médian
-        bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_VOLUME', center='BOUNDS')
-        
-        # Déplacer l'objet au centre du monde
-        obj.location = (0.0, 0.0, 0.0)
-        
-        # Appliquer la résolution (doit être fait avant la conversion en mesh)
-        if obj.data and hasattr(obj.data, 'resolution_u'):
-            obj.data.resolution_u = resolution
-        
-        # Redimensionner l'objet pour correspondre à la taille finale
-        _resize_object_to_cube_size(context, obj, final_size)
-        
-        # S'assurer que l'objet est sélectionné et actif pour la conversion
-        obj.select_set(True)
-        context.view_layer.objects.active = obj
-        
-        # Convertir l'objet en mesh (applique automatiquement les modificateurs)
-        bpy.ops.object.convert(target='MESH')
-        
-        # Désélectionner l'objet
-        obj.select_set(False)
+def _face_resolution_to_contour(resolution):
+    """Mappe la résolution UI (1–30) vers un budget de points de contour."""
+    return max(48, min(1024, int(resolution) * 32))
 
 
-def _postprocess_imported_objects(context, new_objects, object_name, cube_size, face_number, depth, extrusion_scale):
-    """
-    Post-traite les objets importés après conversion en mesh : translation, rotation, nom.
-    
-    Args:
-        context: Le contexte Blender
-        new_objects: Set des objets à traiter
-        object_name: Nom de base pour les objets
-        cube_size: Taille du cube
-        face_number: Numéro de la face pour déterminer la rotation (1-6)
-        depth: Coefficient de profondeur pour l'extrusion
-        extrusion_scale: Facteur global de redimensionnement de l'extrusion (XY)
+def _preprocess_imported_curve(context, obj, final_size, resolution):
+    """Prépare la CURVE SVG (origine, taille, résolution) sans la convertir en mesh."""
+    obj.select_set(True)
+    context.view_layer.objects.active = obj
+
+    bpy.ops.object.origin_set(type="ORIGIN_CENTER_OF_VOLUME", center="BOUNDS")
+    obj.location = (0.0, 0.0, 0.0)
+
+    if obj.data and hasattr(obj.data, "resolution_u"):
+        obj.data.resolution_u = resolution
+    if obj.data and hasattr(obj.data, "dimensions"):
+        obj.data.dimensions = "2D"
+    if obj.data and hasattr(obj.data, "fill_mode"):
+        obj.data.fill_mode = "BOTH"
+    if obj.data and hasattr(obj.data, "bevel_depth"):
+        obj.data.bevel_depth = 0.0
+
+    _resize_object_to_cube_size(context, obj, final_size)
+    obj.select_set(False)
+
+
+def _curve_to_beveled_cutter(
+    context,
+    curve_obj,
+    *,
+    name,
+    base_height,
+    angle,
+    bevel_height,
+    contour_resolution,
+):
+    """Construit le volume bevel à partir de la CURVE et remplace celle-ci."""
+    curve_obj.select_set(True)
+    context.view_layer.objects.active = curve_obj
+
+    volume, info = dice_maker_bevel.build_beveled_volume(
+        curve_obj,
+        base_height=base_height,
+        angle=angle,
+        bevel_height=bevel_height,
+        resolution=contour_resolution,
+    )
+
+    # Supprimer la courbe source (le cutter est le mesh bevel)
+    curve_data = curve_obj.data
+    bpy.data.objects.remove(curve_obj, do_unlink=True)
+    if curve_data is not None and curve_data.users == 0:
+        bpy.data.curves.remove(curve_data)
+
+    # volume s'appelle encore "{curve}-beveled-volume"
+    src_base = (
+        volume.name[: -len(dice_maker_bevel._SUFFIX_VOLUME)]
+        if volume.name.endswith(dice_maker_bevel._SUFFIX_VOLUME)
+        else volume.name
+    )
+    cross_name = dice_maker_bevel.bevel_output_names(src_base)["crossings"]
+    cross_obj = bpy.data.objects.get(cross_name)
+    if cross_obj is not None:
+        data = cross_obj.data
+        bpy.data.objects.remove(cross_obj, do_unlink=True)
+        if data is not None and data.users == 0 and isinstance(data, bpy.types.Mesh):
+            bpy.data.meshes.remove(data)
+
+    volume.name = name
+    volume.select_set(False)
+    print(
+        f"[dice_maker svg] cutter={volume.name} mode={info.get('mode')} "
+        f"verts={info.get('nverts')} crossings={info.get('crossings_before', 0)}→{info.get('crossings', 0)}"
+    )
+    return volume
+
+
+def _postprocess_imported_objects(context, new_objects, object_name, cube_size, face_number):
+    """Place le volume bevel sur la face : large à la surface, biseau vers l'intérieur.
+
+    Comme avant : la translation vers la face est cuite dans le mesh local (Z+),
+    puis seule la rotation d'objet oriente sur la bonne face. Sinon, avec
+    location=(0,0,face) + rotation, tout reste collé sur +Z.
     """
     for obj in new_objects:
-        # Sélectionner l'objet
         obj.select_set(True)
         context.view_layer.objects.active = obj
-        
-        # Positionner le dessin tres legerement a l'interieur de la surface du de.
+
+        # Volume bevel : z=0 large, z=+H étroit → inverser (large en surface, tip vers -Z)
+        for v in obj.data.vertices:
+            v.co.z = -v.co.z
+        # Aligner la face large (max z) sur z=0 local
+        max_z = max(v.co.z for v in obj.data.vertices)
+        for v in obj.data.vertices:
+            v.co.z -= max_z
+
+        # Décaler vers la face +Z en espace local (avant rotation)
         translation_z = (cube_size / 2.0) + (cube_size / 500.0)
-        
-        # Passer en mode édition
-        bpy.ops.object.mode_set(mode='EDIT')
-        
-        # Sélectionner tout
-        bpy.ops.mesh.select_all(action='SELECT')
+        for v in obj.data.vertices:
+            v.co.z += translation_z
+        obj.data.update()
 
-        # Extruder vers -Z local pour pousser la gravure vers l'interieur du de.
-        thickness = (cube_size / 2.0) * depth
-        bpy.ops.mesh.extrude_region_move(
-            TRANSFORM_OT_translate={"value": (0.0, 0.0, -thickness)}
-        )
-
-        # Redimensionner uniquement la region extrudee (selection courante).
-        if extrusion_scale != 1.0:
-            bpy.ops.transform.resize(value=(extrusion_scale, extrusion_scale, 1.0))
-
-        # Re-selectionner tout pour deplacer la forme complete vers la face du de.
-        bpy.ops.mesh.select_all(action='SELECT')
-        bpy.ops.transform.translate(value=(0.0, 0.0, translation_z))
-
-        # Recalculer les normales vers l'exterieur pour fiabiliser la soustraction boolean.
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
         bpy.ops.mesh.normals_make_consistent(inside=False)
-        
-        # Sortir du mode édition
-        bpy.ops.object.mode_set(mode='OBJECT')
-        
-        # Appliquer la rotation pour orienter l'objet sur la bonne face du cube
-        rotation = _get_face_rotation(face_number)
-        obj.rotation_euler = Euler(rotation, 'XYZ')
-        
-        # Désélectionner l'objet
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+        obj.location = (0.0, 0.0, 0.0)
+        obj.rotation_euler = Euler(_get_face_rotation(face_number), "XYZ")
         obj.select_set(False)
-    
-    # Renommer les objets
+
     for idx, obj in enumerate(new_objects):
         if len(new_objects) == 1:
             obj.name = object_name
@@ -263,69 +281,64 @@ def _postprocess_imported_objects(context, new_objects, object_name, cube_size, 
             obj.name = f"{object_name}_{idx + 1}"
 
 
-def import_svg(context, filepath, face_number, size_factor, cube_size, depth, resolution, extrusion_scale):
+def import_svg(
+    context,
+    filepath,
+    face_number,
+    size_factor,
+    cube_size,
+    resolution,
+    *,
+    base_height,
+    angle,
+    bevel_height,
+):
     """
-    Importe un fichier SVG dans Blender.
-    Si un SVG avec le même nom est déjà chargé, il sera supprimé avant l'import.
-    
-    Args:
-        context: Le contexte Blender
-        filepath: Le chemin vers le fichier SVG à importer
-        face_number: Le numéro de la face (1-6) pour le nom de l'objet
-        size_factor: Facteur de taille (0.2 à 0.8)
-        cube_size: Taille du cube (sera multipliée par size_factor)
-        depth: Coefficient de profondeur pour le modificateur SOLIDIFY
-        resolution: Résolution pour l'objet (1 à 10)
-        extrusion_scale: Facteur global de redimensionnement de l'extrusion
-    
+    Importe un SVG, construit le volume bevel, retourne le cutter MESH.
+
     Returns:
-        L'objet importé si succès, None sinon
+        L'objet mesh bevel si succès, None sinon
     """
     if not filepath:
         return None
-    
-    # Convertir le chemin relatif en chemin absolu (Blender peut stocker des chemins relatifs)
+
     abs_filepath = bpy.path.abspath(filepath)
-    
     if not os.path.exists(abs_filepath):
         return None
-    
-    # Nom de l'objet à créer
+
     object_name = f"dice_face_{face_number}"
-    
-    # Obtenir le nom du fichier avec extension pour identifier la collection
     filename_with_ext = os.path.basename(abs_filepath)
-    
-    # Nettoyer l'objet existant s'il existe
     _cleanup_existing_object(object_name)
-    
-    # Importer le fichier SVG
+    # Nettoyer un éventuel volume bevel orphelin du même nom logique
+    _cleanup_existing_object(f"{object_name}-beveled-volume")
+
     try:
-        # Sauvegarder les objets existants avant l'import
         objects_before_import = set(bpy.data.objects)
-        
-        # Importer le SVG
         bpy.ops.import_curve.svg(filepath=abs_filepath)
-        
-        # Récupérer les objets importés depuis la collection
+
         new_objects = _get_imported_objects_from_collection(
             context, filename_with_ext, objects_before_import
         )
-        
         if not new_objects:
             return None
-        
-        # Calculer la taille finale : cube_size * size_factor
-        final_size = cube_size * size_factor
 
-        # Fusionner tous les sous-chemins du SVG avant traitement ; un seul objet par face ensuite.
+        final_size = cube_size * size_factor
         merged_obj = _join_imported_objects_into_one(context, new_objects)
         if not merged_obj:
             return None
 
-        _preprocess_imported_objects(context, {merged_obj}, final_size, cube_size, depth, resolution)
-
-        return merged_obj
+        _preprocess_imported_curve(context, merged_obj, final_size, resolution)
+        contour_res = _face_resolution_to_contour(resolution)
+        volume = _curve_to_beveled_cutter(
+            context,
+            merged_obj,
+            name=object_name,
+            base_height=base_height,
+            angle=angle,
+            bevel_height=bevel_height,
+            contour_resolution=contour_res,
+        )
+        return volume
     except Exception as e:
         raise Exception(f"Erreur lors de l'import de {abs_filepath}: {str(e)}")
 
@@ -484,70 +497,76 @@ def organize_objects_on_x_axis(context, dice_obj, print_copies, spacing=0.1, pla
         current_x += copy_width + spacing
 
 
-def finalize_imported_objects(context, imported_objects, cube_size, depth, extrusion_scale):
-    """
-    Finalise les objets importés : translation, rotation, nom.
-    
-    Args:
-        context: Le contexte Blender
-        imported_objects: Liste des objets importés avec leurs informations (obj, face_number, object_name)
-        cube_size: Taille du cube
-        depth: Coefficient de profondeur pour l'extrusion
-        extrusion_scale: Facteur global de redimensionnement de l'extrusion
-    """
-    for obj_info in imported_objects:
-        obj = obj_info['object']
-        face_number = obj_info['face_number']
-        object_name = obj_info['object_name']
-        new_objects = {obj}
-        
-        # Post-traiter les objets importés (translation, rotation, nom)
+def finalize_imported_objects(context, imported_objects, cube_size):
+    """Finalise les cutters bevel : placement sur la face + rotation."""
+    n = len(imported_objects)
+    for i, obj_info in enumerate(imported_objects):
+        ui.refresh_ui(
+            f"Dice Maker : placement face {obj_info['face_number']} ({i + 1}/{n})…"
+        )
+        obj = obj_info["object"]
+        face_number = obj_info["face_number"]
+        object_name = obj_info["object_name"]
         _postprocess_imported_objects(
-            context, new_objects, object_name, cube_size, face_number, depth, extrusion_scale
+            context, {obj}, object_name, cube_size, face_number
         )
 
 
-def import_all_svgs(context, svg_files, size_factors, cube_size, depth, resolutions, extrusion_scale=1.0):
+def import_all_svgs(
+    context,
+    svg_files,
+    size_factors,
+    cube_size,
+    resolutions,
+    *,
+    base_height,
+    angle,
+    bevel_height,
+):
     """
-    Importe une liste de fichiers SVG.
-    
-    Args:
-        context: Le contexte Blender
-        svg_files: Liste des chemins vers les fichiers SVG
-        size_factors: Liste des facteurs de taille pour chaque face (0.2 à 0.8)
-        cube_size: Taille du cube (sera multipliée par chaque size_factor)
-        depth: Coefficient de profondeur pour le modificateur SOLIDIFY
-        resolutions: Liste des résolutions pour chaque face (1 à 10)
-        extrusion_scale: Facteur global de redimensionnement de l'extrusion (defaut 1.0)
-    
+    Importe une liste de fichiers SVG et construit les volumes bevel.
+
     Returns:
-        Tuple (liste des dictionnaires avec les objets et leurs infos, liste des erreurs)
-        Chaque dictionnaire contient: {'object': obj, 'face_number': i+1, 'object_name': object_name}
+        Tuple (liste des dicts {object, face_number, object_name}, liste des erreurs)
     """
     imported_objects = []
     errors = []
-    
+
     for i, svg_file in enumerate(svg_files):
         if svg_file:
             try:
-                # Récupérer le facteur de taille correspondant (par défaut 0.5 si non défini)
+                ui.refresh_ui(f"Dice Maker : face {i + 1}/6 — import + bevel…")
                 size_factor = size_factors[i] if i < len(size_factors) else 0.5
-                # Récupérer la résolution correspondante (par défaut 5 si non défini)
                 resolution = resolutions[i] if i < len(resolutions) else 5
                 obj = import_svg(
-                    context, svg_file, i + 1, size_factor, cube_size, depth, resolution, extrusion_scale
+                    context,
+                    svg_file,
+                    i + 1,
+                    size_factor,
+                    cube_size,
+                    resolution,
+                    base_height=base_height,
+                    angle=angle,
+                    bevel_height=bevel_height,
                 )
                 if obj:
                     object_name = f"dice_face_{i + 1}"
-                    imported_objects.append({
-                        'object': obj,
-                        'face_number': i + 1,
-                        'object_name': object_name
-                    })
+                    imported_objects.append(
+                        {
+                            "object": obj,
+                            "face_number": i + 1,
+                            "object_name": object_name,
+                        }
+                    )
+                    ui.refresh_ui(f"Dice Maker : face {i + 1}/6 — OK")
                 else:
-                    errors.append(f"Face {i + 1}: Le fichier n'a pas pu être importé (fichier introuvable ou invalide)")
+                    errors.append(
+                        f"Face {i + 1}: Le fichier n'a pas pu être importé "
+                        f"(fichier introuvable ou invalide)"
+                    )
             except Exception as e:
                 errors.append(f"Face {i + 1}: {str(e)}")
-    
+                ui.refresh_ui(f"Dice Maker : face {i + 1}/6 — erreur")
+
     return imported_objects, errors
 

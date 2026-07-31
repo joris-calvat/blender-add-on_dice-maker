@@ -18,6 +18,8 @@ from bpy.types import Operator, Panel, PropertyGroup
 from mathutils import Vector
 from mathutils.geometry import tessellate_polygon
 
+from . import dice_maker_ui as ui
+
 _SUFFIX_VOLUME = "-beveled-volume"
 _SUFFIX_RINGS = "-bevel-rings"
 _SUFFIX_CROSSINGS = "-bevel-crossings"
@@ -688,6 +690,10 @@ def resolve_crossings_by_pullback(
         hits, hits_bm = find_open_mesh_crossings(bm, z_min=body_h)
         if not hits:
             break
+        if iters == 1 or iters % 3 == 0:
+            ui.refresh_ui(
+                f"Dice Maker : resolve crossings ({len(hits)} hits, iter {iters})…"
+            )
         guilty = set()
         for h in hits:
             for v in h["edge_verts"]:
