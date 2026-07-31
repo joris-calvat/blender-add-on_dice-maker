@@ -120,7 +120,7 @@ class DiceMakerProperties(PropertyGroup):
     # Bevel volume (gravure SVG)
     base_height: FloatProperty(
         name="Base Height",
-        description="Hauteur du corps sans bevel (0 = biseau dès le bas)",
+        description="Hauteur du corps sans bevel, en unités du dé final (0 = biseau dès le bas)",
         default=0.05,
         min=0.0,
         max=2.0,
@@ -140,7 +140,7 @@ class DiceMakerProperties(PropertyGroup):
     )
     bevel_height: FloatProperty(
         name="Bevel Height",
-        description="Hauteur verticale du biseau (0 = prisme sans bevel)",
+        description="Hauteur verticale du biseau, en unités du dé final (0 = prisme sans bevel)",
         default=0.15,
         min=0.0,
         max=2.0,
@@ -157,20 +157,20 @@ class DiceMakerProperties(PropertyGroup):
         default=False
     )
     
-    # Taille globale pour tous les objets (le cube par défaut vaut 2)
+    # Taille globale du dé (arête) — toute la géométrie est construite à cette échelle
     size: FloatProperty(
         name="Size",
-        description="Taille globale pour tous les objets (le cube par défaut vaut 2)",
+        description="Taille du dé (longueur d'arête). Base/Bevel height sont absolus par rapport à cette taille.",
         default=1.6,
         min=0.1,
         max=10.0,
         precision=2
     )
     
-    # Taille de la sphère pour arrondir les coins du cube
+    # Facteur d'arrondi (calé historiquement sur un demi-cube de 1) ; mis à l'échelle avec Size
     sphere_rounding_size: FloatProperty(
         name="Sphere Rounding Size",
-        description="Taille de la sphère pour arrondir les coins du cube (1.3 à 1.5)",
+        description="Facteur d'arrondi des coins (relatif ; mis à l'échelle avec Size)",
         default=1.37,
         min=1.3,
         max=1.5,
@@ -179,8 +179,8 @@ class DiceMakerProperties(PropertyGroup):
     
     # Pourcentage de hauteur à appliquer aux copies d'impression
     dice_face_height: IntProperty(
-        name="Dice Face Height",
-        description="Pourcentage de hauteur à appliquer aux copies d'impression (50 à 100)",
+        name="Face Height %",
+        description="Hauteur des copies Print Drawings (50–100 %). Sans effet sur le dé.",
         default=85,
         min=50,
         max=100
@@ -299,14 +299,13 @@ class DICE_MAKER_PT_panel(Panel):
         layout.prop(props, "sphere_rounding_size", text="Sphere Rounding Size")
         
         layout.separator()
-        
-        # Pourcentage de hauteur pour les copies d'impression
-        layout.prop(props, "dice_face_height", text="Dice Face Height %")
-        
-        layout.separator()
-        
-        # Option pour les dessins à imprimer
-        layout.prop(props, "print_drawings", text="Print Drawings")
+
+        # Impression des faces (hauteur liée uniquement à cette option)
+        box = layout.box()
+        box.prop(props, "print_drawings", text="Print Drawings")
+        sub = box.column()
+        sub.enabled = props.print_drawings
+        sub.prop(props, "dice_face_height", text="Face Height %")
 
         layout.separator()
 

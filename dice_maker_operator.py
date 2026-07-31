@@ -43,7 +43,9 @@ class DICE_MAKER_OT_create_dice(Operator):
             props.resolution_6,
         ]
 
-        cube_size = 2.0
+        # Taille finale du dé dès le départ (pas de scale global ensuite)
+        # → base_height / bevel_height restent exacts.
+        cube_size = float(props.size)
         n_svg = sum(1 for f in svg_files if f)
         # Étapes approx : import×N + finalize + cube + bool×N + sphere + finish
         total_steps = max(1, n_svg * 2 + 4)
@@ -101,7 +103,7 @@ class DICE_MAKER_OT_create_dice(Operator):
                 bpy.data.objects.remove(bpy.data.objects[dice_name], do_unlink=True)
 
             ui.refresh_ui("Dice Maker : création du cube…")
-            bpy.ops.mesh.primitive_cube_add(size=2, location=(0, 0, 0))
+            bpy.ops.mesh.primitive_cube_add(size=cube_size, location=(0, 0, 0))
             cube = context.active_object
             cube.name = dice_name
             step += 1
@@ -143,7 +145,8 @@ class DICE_MAKER_OT_create_dice(Operator):
             sphere = context.active_object
             sphere.name = sphere_rounding_name
             sphere.select_set(True)
-            sphere_scale = props.sphere_rounding_size
+            # Facteur historique calé sur un demi-cube de 1 (cube size=2)
+            sphere_scale = props.sphere_rounding_size * (cube_size / 2.0)
             sphere.scale = (sphere_scale, sphere_scale, sphere_scale)
 
             cube.select_set(True)
@@ -156,13 +159,6 @@ class DICE_MAKER_OT_create_dice(Operator):
             step += 1
             ui.progress_update(step, "Dice Maker : arrondi appliqué")
 
-            size_factor = props.size / 2.0
-            if size_factor != 1.0:
-                ui.refresh_ui("Dice Maker : mise à l'échelle…")
-                dice_maker_svg.apply_size_factor_to_objects(
-                    context, cube, print_copies, size_factor
-                )
-
             ui.refresh_ui("Dice Maker : organisation…")
             dice_maker_svg.organize_objects_on_x_axis(
                 context, cube, print_copies, place_on_ground=props.print_drawings
@@ -171,7 +167,8 @@ class DICE_MAKER_OT_create_dice(Operator):
 
             self.report(
                 {'INFO'},
-                f"Dé créé: {dice_name} ({len(imported_objects)} SVG appliqués)",
+                f"Dé créé: {dice_name} ({len(imported_objects)} SVG, "
+                f"size={cube_size:.3f})",
             )
             return {'FINISHED'}
         finally:
