@@ -42,6 +42,14 @@ class DICE_MAKER_OT_create_dice(Operator):
             props.resolution_5,
             props.resolution_6,
         ]
+        flatten_tops = [
+            props.flatten_top_1,
+            props.flatten_top_2,
+            props.flatten_top_3,
+            props.flatten_top_4,
+            props.flatten_top_5,
+            props.flatten_top_6,
+        ]
 
         # Taille finale du dé dès le départ (pas de scale global ensuite)
         # → base_height / bevel_height restent exacts.
@@ -60,6 +68,7 @@ class DICE_MAKER_OT_create_dice(Operator):
                 size_factors,
                 cube_size,
                 resolutions,
+                flatten_tops,
                 base_height=props.base_height,
                 angle=float(props.bevel_angle),
                 bevel_height=props.bevel_height,

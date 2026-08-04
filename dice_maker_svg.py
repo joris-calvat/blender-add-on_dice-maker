@@ -198,6 +198,7 @@ def _curve_to_beveled_cutter(
     angle,
     bevel_height,
     contour_resolution,
+    flatten_top=True,
 ):
     """Construit le volume bevel à partir de la CURVE et remplace celle-ci."""
     curve_obj.select_set(True)
@@ -209,6 +210,7 @@ def _curve_to_beveled_cutter(
         angle=angle,
         bevel_height=bevel_height,
         resolution=contour_resolution,
+        flatten_top=flatten_top,
     )
 
     # Supprimer la courbe source (le cutter est le mesh bevel)
@@ -292,6 +294,7 @@ def import_svg(
     base_height,
     angle,
     bevel_height,
+    flatten_top=True,
 ):
     """
     Importe un SVG, construit le volume bevel, retourne le cutter MESH.
@@ -337,6 +340,7 @@ def import_svg(
             angle=angle,
             bevel_height=bevel_height,
             contour_resolution=contour_res,
+            flatten_top=flatten_top,
         )
         return volume
     except Exception as e:
@@ -518,6 +522,7 @@ def import_all_svgs(
     size_factors,
     cube_size,
     resolutions,
+    flatten_tops=None,
     *,
     base_height,
     angle,
@@ -531,6 +536,8 @@ def import_all_svgs(
     """
     imported_objects = []
     errors = []
+    if flatten_tops is None:
+        flatten_tops = [True] * len(svg_files)
 
     for i, svg_file in enumerate(svg_files):
         if svg_file:
@@ -538,6 +545,7 @@ def import_all_svgs(
                 ui.refresh_ui(f"Dice Maker : face {i + 1}/6 — import + bevel…")
                 size_factor = size_factors[i] if i < len(size_factors) else 0.5
                 resolution = resolutions[i] if i < len(resolutions) else 5
+                flatten_top = flatten_tops[i] if i < len(flatten_tops) else True
                 obj = import_svg(
                     context,
                     svg_file,
@@ -548,6 +556,7 @@ def import_all_svgs(
                     base_height=base_height,
                     angle=angle,
                     bevel_height=bevel_height,
+                    flatten_top=flatten_top,
                 )
                 if obj:
                     object_name = f"dice_face_{i + 1}"
@@ -558,7 +567,10 @@ def import_all_svgs(
                             "object_name": object_name,
                         }
                     )
-                    ui.refresh_ui(f"Dice Maker : face {i + 1}/6 — OK")
+                    ui.refresh_ui(
+                        f"Dice Maker : face {i + 1}/6 — OK "
+                        f"(flatten={flatten_top})"
+                    )
                 else:
                     errors.append(
                         f"Face {i + 1}: Le fichier n'a pas pu être importé "

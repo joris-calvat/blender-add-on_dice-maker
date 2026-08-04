@@ -230,6 +230,38 @@ class DiceMakerProperties(PropertyGroup):
         max=30
     )
 
+    # Flatten Top par face (plateau forcé à Base+Bevel, ou Z suit la pente)
+    flatten_top_1: BoolProperty(
+        name="Flatten Top Face 1",
+        description="Plateau plat à Base+Bevel height (sinon le Z suit la pente)",
+        default=True,
+    )
+    flatten_top_2: BoolProperty(
+        name="Flatten Top Face 2",
+        description="Plateau plat à Base+Bevel height (sinon le Z suit la pente)",
+        default=True,
+    )
+    flatten_top_3: BoolProperty(
+        name="Flatten Top Face 3",
+        description="Plateau plat à Base+Bevel height (sinon le Z suit la pente)",
+        default=True,
+    )
+    flatten_top_4: BoolProperty(
+        name="Flatten Top Face 4",
+        description="Plateau plat à Base+Bevel height (sinon le Z suit la pente)",
+        default=True,
+    )
+    flatten_top_5: BoolProperty(
+        name="Flatten Top Face 5",
+        description="Plateau plat à Base+Bevel height (sinon le Z suit la pente)",
+        default=True,
+    )
+    flatten_top_6: BoolProperty(
+        name="Flatten Top Face 6",
+        description="Plateau plat à Base+Bevel height (sinon le Z suit la pente)",
+        default=True,
+    )
+
 
 class DICE_MAKER_PT_panel(Panel):
     """Panel principal pour Dice Maker"""
@@ -245,42 +277,21 @@ class DICE_MAKER_PT_panel(Panel):
 
         # Sélecteurs de fichiers SVG avec leurs tailles
         layout.label(text="Files")
-        
-        # Face front
-        layout.prop(props, "svg_file_1", text="Front")
-        row = layout.row()
-        row.prop(props, "size_factor_1", text="Size")
-        row.prop(props, "resolution_1", text="Resolution")
-        
-        # Face left
-        layout.prop(props, "svg_file_2", text="Left")
-        row = layout.row()
-        row.prop(props, "size_factor_2", text="Size")
-        row.prop(props, "resolution_2", text="Resolution")
-        
-        # Face right
-        layout.prop(props, "svg_file_3", text="Right")
-        row = layout.row()
-        row.prop(props, "size_factor_3", text="Size")
-        row.prop(props, "resolution_3", text="Resolution")
-        
-        # Face top
-        layout.prop(props, "svg_file_4", text="Top")
-        row = layout.row()
-        row.prop(props, "size_factor_4", text="Size")
-        row.prop(props, "resolution_4", text="Resolution")
-        
-        # Face bottom
-        layout.prop(props, "svg_file_5", text="Bottom")
-        row = layout.row()
-        row.prop(props, "size_factor_5", text="Size")
-        row.prop(props, "resolution_5", text="Resolution")
-        
-        # Face back
-        layout.prop(props, "svg_file_6", text="Back")
-        row = layout.row()
-        row.prop(props, "size_factor_6", text="Size")
-        row.prop(props, "resolution_6", text="Resolution")
+
+        faces = (
+            ("Front", "svg_file_1", "size_factor_1", "resolution_1", "flatten_top_1"),
+            ("Left", "svg_file_2", "size_factor_2", "resolution_2", "flatten_top_2"),
+            ("Right", "svg_file_3", "size_factor_3", "resolution_3", "flatten_top_3"),
+            ("Top", "svg_file_4", "size_factor_4", "resolution_4", "flatten_top_4"),
+            ("Bottom", "svg_file_5", "size_factor_5", "resolution_5", "flatten_top_5"),
+            ("Back", "svg_file_6", "size_factor_6", "resolution_6", "flatten_top_6"),
+        )
+        for label, svg_attr, size_attr, res_attr, flat_attr in faces:
+            layout.prop(props, svg_attr, text=label)
+            row = layout.row(align=True)
+            row.prop(props, size_attr, text="Size")
+            row.prop(props, res_attr, text="Resolution")
+            row.prop(props, flat_attr, text="Flatten Top")
 
         layout.separator()
         layout.label(text="Bevel")

@@ -13,7 +13,7 @@ import math
 
 import bpy
 import bmesh
-from bpy.props import FloatProperty, IntProperty, PointerProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, PointerProperty
 from bpy.types import Operator, Panel, PropertyGroup
 from mathutils import Vector
 from mathutils.geometry import tessellate_polygon
@@ -628,6 +628,52 @@ def find_open_mesh_crossings(bm, *, z_min=None, marker_size=0.015):
     return hits, mk
 
 
+def _smooth_cyclic_values(values, loop_ranges, iters=2):
+    """Lissage cyclique 1D par loop (ex. scales de travel)."""
+    out = [float(v) for v in values]
+    for _ in range(max(0, iters)):
+        nxt = out[:]
+        for a, b in loop_ranges:
+            m = b - a
+            if m < 3:
+                continue
+            for k in range(m):
+                i = a + k
+                im = a + ((k - 1) % m)
+                ip = a + ((k + 1) % m)
+                nxt[i] = 0.5 * out[i] + 0.25 * out[im] + 0.25 * out[ip]
+        out = nxt
+    return out
+
+
+def despike_rim_heights(matched, loop_ranges, *, iters=4):
+    """Supprime les pics Z isolés sur le rim (pointes plus hautes que les voisins).
+
+    Utilisé quand flatten_top=False : un sommet tip peut garder un travel élevé
+    alors que ses voisins sont clampés → pic. On ramène les maxima locaux à la
+    moyenne des voisins, puis un léger lissage.
+    """
+    for _ in range(max(0, iters)):
+        for a, b in loop_ranges:
+            m = b - a
+            if m < 3:
+                continue
+            zs = [matched[a + k].co.z for k in range(m)]
+            new_z = zs[:]
+            for k in range(m):
+                zp = zs[(k - 1) % m]
+                zc = zs[k]
+                zn = zs[(k + 1) % m]
+                neigh_max = max(zp, zn)
+                neigh_avg = 0.5 * (zp + zn)
+                if zc > neigh_max + 1e-7:
+                    new_z[k] = neigh_avg
+                else:
+                    new_z[k] = 0.5 * zc + 0.25 * zp + 0.25 * zn
+            for k in range(m):
+                matched[a + k].co.z = new_z[k]
+
+
 def resolve_crossings_by_pullback(
     bm,
     matched,
@@ -637,6 +683,7 @@ def resolve_crossings_by_pullback(
     directions,
     height,
     body_h,
+    flatten_top=True,
     loop_ranges=None,
     max_iters=24,
     shrink=0.82,
@@ -644,8 +691,8 @@ def resolve_crossings_by_pullback(
 ):
     """Réduit localement le travel des sommets impliqués dans un croisement.
 
-    Retourne (hits_restants, hits_bm, n_iters, scales).
-    `loop_ranges` : liste (start, end) pour ne pas wrapper entre loops distincts.
+    Si `flatten_top` : Z forcé à `height`.
+    Sinon : Z suit la pente (travel réel × sin angle), avec lissage anti-pics.
     """
     n = len(matched)
     scales = [1.0] * n
@@ -673,11 +720,14 @@ def resolve_crossings_by_pullback(
             p = outer[i]
             direction = directions[i]
             if direction.length < 1e-12 or max_travel[i] < 1e-12:
-                v.co = Vector((p.x, p.y, height))
+                v.co = Vector((p.x, p.y, height if flatten_top else body_h))
                 continue
             start = Vector((p.x, p.y, body_h))
             final = start + direction * (max_travel[i] * scales[i])
-            v.co = Vector((final.x, final.y, height))
+            if flatten_top:
+                v.co = Vector((final.x, final.y, height))
+            else:
+                v.co = final.copy()
         bm.verts.ensure_lookup_table()
         bm.edges.ensure_lookup_table()
         bm.faces.ensure_lookup_table()
@@ -713,46 +763,320 @@ def resolve_crossings_by_pullback(
     else:
         hits, hits_bm = find_open_mesh_crossings(bm, z_min=body_h)
 
+    if not flatten_top:
+        # Uniformise le travel, puis abaisse les pics (pointes) via le scale
+        # pour garder XY/Z cohérents sur la pente.
+        scales = _smooth_cyclic_values(scales, loop_ranges, iters=3)
+        apply()
+        for _ in range(5):
+            spiked = False
+            for a, b in loop_ranges:
+                m = b - a
+                if m < 3:
+                    continue
+                zs = [matched[a + k].co.z for k in range(m)]
+                for k in range(m):
+                    zp = zs[(k - 1) % m]
+                    zc = zs[k]
+                    zn = zs[(k + 1) % m]
+                    if zc > max(zp, zn) + 1e-6:
+                        scales[a + k] *= 0.82
+                        spiked = True
+            apply()
+            if not spiked:
+                break
+        scales = _smooth_cyclic_values(scales, loop_ranges, iters=1)
+        apply()
+        despike_rim_heights(matched, loop_ranges, iters=2)
+        bm.verts.ensure_lookup_table()
+
     return hits, hits_bm, iters, scales
 
 
-def _tessellate_region_faces(bm, outer_verts, hole_vert_lists):
-    """Crée les faces d'une région (outer + trous) via tessellate_polygon."""
-    if len(outer_verts) < 3:
-        return 0
-    flat_verts = list(outer_verts)
-    polys = [[Vector((v.co.x, v.co.y)) for v in outer_verts]]
-    for hole in hole_vert_lists:
-        if len(hole) < 3:
-            continue
-        # Trous en CW pour tessellate_polygon
-        area = signed_area([Vector((v.co.x, v.co.y, 0.0)) for v in hole])
-        ordered = list(reversed(hole)) if area > 0 else list(hole)
-        flat_verts.extend(ordered)
-        polys.append([Vector((v.co.x, v.co.y)) for v in ordered])
-    try:
-        tris = tessellate_polygon(polys)
-    except Exception as exc:
-        print(f"[dice_maker bevel] tessellate failed: {exc}")
-        return 0
-    created = 0
-    for t in tris:
+def _beautify_faces(bm, faces):
+    """Améliore la triangulation existante (flip d'arêtes), sans changer le domaine."""
+    faces = [f for f in faces if f.is_valid]
+    if not faces:
+        return
+    for _ in range(2):
+        faces = [f for f in faces if f.is_valid]
+        if not faces:
+            return
+        edge_set = {e for f in faces for e in f.edges}
         try:
-            bm.faces.new((flat_verts[t[0]], flat_verts[t[1]], flat_verts[t[2]]))
-            created += 1
+            bmesh.ops.beautify_fill(bm, faces=faces, edges=list(edge_set))
+        except Exception:
+            return
+
+
+def _idw_z_from_rim(x, y, rim_verts, power=2.0):
+    """Z intérieur approximé par inverse-distance depuis le rim (flatten off)."""
+    num = 0.0
+    den = 0.0
+    for v in rim_verts:
+        dx = v.co.x - x
+        dy = v.co.y - y
+        d2 = dx * dx + dy * dy
+        if d2 < 1e-16:
+            return v.co.z
+        w = 1.0 / (d2 ** (0.5 * power))
+        num += w * v.co.z
+        den += w
+    return (num / den) if den > 0.0 else 0.0
+
+
+def _point_in_region_xy(pt, outer_poly, hole_polys):
+    if not point_in_poly(pt, outer_poly):
+        return False
+    for h in hole_polys:
+        if point_in_poly(pt, h):
+            return False
+    return True
+
+
+def _seed_interior_points(outer_poly, hole_polys, spacing):
+    """Points intérieurs pour casser les longues diagonales (CDT)."""
+    if spacing <= 1e-8:
+        return []
+    xs = [p.x for p in outer_poly]
+    ys = [p.y for p in outer_poly]
+    seeds = []
+    x = min(xs) + 0.5 * spacing
+    while x <= max(xs):
+        y = min(ys) + 0.5 * spacing
+        while y <= max(ys):
+            pt = Vector((x, y, 0.0))
+            if _point_in_region_xy(pt, outer_poly, hole_polys):
+                seeds.append(pt)
+            y += spacing
+        x += spacing
+    return seeds
+
+
+def _boundary_edge_spacing(loops):
+    """Espacement cible ≈ médiane des arêtes du contour."""
+    lengths = []
+    for loop in loops:
+        n = len(loop)
+        for i in range(n):
+            a = loop[i].co
+            b = loop[(i + 1) % n].co
+            lengths.append((a.xy - b.xy).length)
+    if not lengths:
+        return 0.15
+    lengths.sort()
+    med = lengths[len(lengths) // 2]
+    # Un peu plus large que le rim pour ne pas exploser le nombre de faces
+    return max(med * 1.6, 0.05)
+
+
+def _tessellate_via_cdt(bm, outer_verts, holes, seed_interior=True):
+    """Constrained Delaunay (+ graines intérieures optionnelles)."""
+    try:
+        from mathutils.geometry import delaunay_2d_cdt
+    except ImportError:
+        return []
+
+    # Outer CCW, holes CW (convention CDT / winding)
+    def _order_bm(loop, want_ccw):
+        area = signed_area([Vector((v.co.x, v.co.y, 0.0)) for v in loop])
+        if want_ccw:
+            return list(loop) if area >= 0 else list(reversed(loop))
+        return list(loop) if area <= 0 else list(reversed(loop))
+
+    outer_ordered = _order_bm(outer_verts, want_ccw=True)
+    outer_poly = [Vector((v.co.x, v.co.y, 0.0)) for v in outer_ordered]
+    hole_polys = []
+    hole_loops = []
+    for hole in holes:
+        ordered = _order_bm(hole, want_ccw=False)
+        hole_loops.append(ordered)
+        hole_polys.append([Vector((v.co.x, v.co.y, 0.0)) for v in ordered])
+
+    loops = [outer_ordered] + hole_loops
+    verts_2d = []
+    bm_map = []  # BMVert ou None (graine)
+    edges = []
+    for loop in loops:
+        start = len(verts_2d)
+        for v in loop:
+            verts_2d.append(Vector((v.co.x, v.co.y)))
+            bm_map.append(v)
+        n = len(loop)
+        for i in range(n):
+            edges.append((start + i, start + ((i + 1) % n)))
+
+    outer_face = list(range(len(outer_ordered)))
+
+    seeds = []
+    spacing = 0.0
+    if seed_interior:
+        spacing = _boundary_edge_spacing(loops)
+        seeds = _seed_interior_points(outer_poly, hole_polys, spacing)
+        if len(seeds) > 800:
+            spacing *= (len(seeds) / 800.0) ** 0.5
+            seeds = _seed_interior_points(outer_poly, hole_polys, spacing)
+        for s in seeds:
+            verts_2d.append(Vector((s.x, s.y)))
+            bm_map.append(None)
+
+    if len(verts_2d) < 3:
+        return []
+
+    rim_all = [v for v in bm_map if v is not None]
+    # output_type 3 : contraintes + détection de trous
+    try:
+        coords, _oe, faces_out, orig_verts, _oedges, _ofaces = delaunay_2d_cdt(
+            verts_2d, edges, [outer_face], 3, 1e-6, True
+        )
+    except Exception as exc:
+        print(f"[dice_maker bevel] CDT failed: {exc}")
+        return []
+
+    print(
+        f"[dice_maker bevel] CDT seeds={len(seeds)} spacing={spacing:.4f} "
+        f"out_faces={len(faces_out)}"
+    )
+
+    steiner_cache = {}
+    created = []
+    snap_eps2 = (1e-4) ** 2
+
+    def map_vert(idx):
+        if idx in steiner_cache:
+            return steiner_cache[idx]
+        ov = orig_verts[idx] if idx < len(orig_verts) else []
+        if not isinstance(ov, (list, tuple)):
+            ov = [ov] if ov is not None else []
+        for src in ov:
+            if src is None:
+                continue
+            if 0 <= src < len(bm_map) and bm_map[src] is not None:
+                steiner_cache[idx] = bm_map[src]
+                return bm_map[src]
+        c = coords[idx]
+        # Snap sur un sommet rim existant (évite doublons → non-manifold après merge)
+        best = None
+        best_d = snap_eps2
+        for v in rim_all:
+            d = (v.co.x - c.x) ** 2 + (v.co.y - c.y) ** 2
+            if d < best_d:
+                best_d = d
+                best = v
+        if best is not None:
+            steiner_cache[idx] = best
+            return best
+        z = _idw_z_from_rim(c.x, c.y, rim_all)
+        nv = bm.verts.new((c.x, c.y, z))
+        steiner_cache[idx] = nv
+        return nv
+
+    def edge_saturated(a, b):
+        for e in a.link_edges:
+            if e.other_vert(a) is b and len(e.link_faces) >= 2:
+                return True
+        return False
+
+    for face in faces_out:
+        if len(face) < 3:
+            continue
+        try:
+            tri = [map_vert(face[0]), map_vert(face[1]), map_vert(face[2])]
+        except (IndexError, ReferenceError, ValueError):
+            continue
+        if tri[0] is tri[1] or tri[1] is tri[2] or tri[0] is tri[2]:
+            continue
+        cx = (tri[0].co.x + tri[1].co.x + tri[2].co.x) / 3.0
+        cy = (tri[0].co.y + tri[1].co.y + tri[2].co.y) / 3.0
+        if not _point_in_region_xy(Vector((cx, cy, 0.0)), outer_poly, hole_polys):
+            continue
+        # Ne pas empiler une 3e face sur une arête déjà pleine
+        if (
+            edge_saturated(tri[0], tri[1])
+            or edge_saturated(tri[1], tri[2])
+            or edge_saturated(tri[2], tri[0])
+        ):
+            continue
+        try:
+            f = bm.faces.new(tri)
+            created.append(f)
         except ValueError:
             continue
+
+    if steiner_cache:
+        bm.verts.ensure_lookup_table()
     return created
 
 
-def close_regions_top(bm, region_rims, height, merge_dist=1e-4):
-    """Referme chaque région séparément (pas de holes_fill global)."""
+def _tessellate_region_faces(bm, outer_verts, hole_vert_lists, seed_interior=True):
+    """Remplit une région (outer + trous) sans longues traverses.
+
+    1) Constrained Delaunay (+ graines si seed_interior)
+    2) Fallback tessellate_polygon + beautify
+    """
+    if len(outer_verts) < 3:
+        return 0
+
+    holes = [h for h in hole_vert_lists if len(h) >= 3]
+    created = _tessellate_via_cdt(
+        bm, outer_verts, holes, seed_interior=seed_interior
+    )
+    used_cdt = bool(created)
+
+    if not created:
+        flat_verts = list(outer_verts)
+        polys = [[Vector((v.co.x, v.co.y)) for v in outer_verts]]
+        for hole in holes:
+            area = signed_area([Vector((v.co.x, v.co.y, 0.0)) for v in hole])
+            ordered = list(reversed(hole)) if area > 0 else list(hole)
+            flat_verts.extend(ordered)
+            polys.append([Vector((v.co.x, v.co.y)) for v in ordered])
+        try:
+            tris = tessellate_polygon(polys)
+        except Exception as exc:
+            print(f"[dice_maker bevel] tessellate failed: {exc}")
+            return 0
+        for t in tris:
+            try:
+                f = bm.faces.new(
+                    (flat_verts[t[0]], flat_verts[t[1]], flat_verts[t[2]])
+                )
+                created.append(f)
+            except ValueError:
+                continue
+
+    # beautify sur CDT+graines crée souvent du non-manifold avec les murs
+    if created and not used_cdt:
+        _beautify_faces(bm, created)
+    return len([f for f in created if f.is_valid])
+
+
+def close_regions_top(bm, region_rims, merge_dist=1e-4):
+    """Referme chaque région séparément (sommets au Z courant, plat ou non)."""
     total = 0
+    rim_verts = []
     for rim in region_rims:
-        total += _tessellate_region_faces(bm, rim["outer"], rim["holes"])
-    top = [v for v in bm.verts if abs(v.co.z - height) < 1e-3]
-    if top and merge_dist > 0:
-        bmesh.ops.remove_doubles(bm, verts=top, dist=merge_dist)
+        total += _tessellate_region_faces(
+            bm, rim["outer"], rim["holes"], seed_interior=True
+        )
+        rim_verts.extend(rim["outer"])
+        for h in rim["holes"]:
+            rim_verts.extend(h)
+    if rim_verts and merge_dist > 0:
+        # Un seul merge : après ça, les refs rim sont invalidées
+        unique = []
+        seen = set()
+        for v in rim_verts:
+            if id(v) in seen:
+                continue
+            seen.add(id(v))
+            try:
+                if v.is_valid:
+                    unique.append(v)
+            except ReferenceError:
+                continue
+        if unique:
+            bmesh.ops.remove_doubles(bm, verts=unique, dist=merge_dist)
     bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
     return total
 
@@ -799,8 +1123,13 @@ def build_extrude_move_cut_mesh(
     base_height=0.8,
     angle=45.0,
     bevel_height=0.2,
+    flatten_top=True,
 ):
-    """Régions → extrude base → extrude biseau → move → resolve → close."""
+    """Régions → extrude base → extrude biseau → move → resolve → close.
+
+    `flatten_top` : si True, le plateau est forcé à base+bevel même quand le
+    travel est réduit ; si False, le Z suit la pente (points « coupés » plus bas).
+    """
     if not regions:
         raise RuntimeError("aucune région")
 
@@ -816,6 +1145,7 @@ def build_extrude_move_cut_mesh(
     # Longueur le long de la pente pour monter exactement bevel_height
     dist = (bh / sin_a) if bh > 1e-12 else 0.0
     height = body_h + bh
+    flatten_top = bool(flatten_top)
 
     bm = bmesh.new()
     rim_loops = []
@@ -825,7 +1155,10 @@ def build_extrude_move_cut_mesh(
         o_verts = [bm.verts.new(p) for p in outer]
         h_vert_lists = [[bm.verts.new(p) for p in h] for h in holes]
         bm.verts.ensure_lookup_table()
-        nfaces = _tessellate_region_faces(bm, o_verts, h_vert_lists)
+        # Fond : pas de graines (évite un plateau intérieur qui survivrait à l'extrude)
+        nfaces = _tessellate_region_faces(
+            bm, o_verts, h_vert_lists, seed_interior=False
+        )
         if nfaces == 0:
             bm.free()
             raise RuntimeError("impossible de tesseller une région")
@@ -972,6 +1305,24 @@ def build_extrude_move_cut_mesh(
         max_travel.append(best * 0.98)
 
     # Appliquer + lissage par loop
+    def _set_rim(i, xy, travel_or_none=None):
+        p = outer_pts[i]
+        d = directions[i]
+        if d.length < 1e-12 or max_travel[i] < 1e-12:
+            matched[i].co = Vector((p.x, p.y, height if flatten_top else body_h))
+            return
+        start = Vector((p.x, p.y, body_h))
+        if travel_or_none is None:
+            travel = max_travel[i]
+        else:
+            travel = travel_or_none
+        final = start + d * travel
+        if flatten_top:
+            matched[i].co = Vector((xy.x, xy.y, height))
+        else:
+            # Conserve le Z de pente correspondant au travel XY projeté
+            matched[i].co = Vector((xy.x, xy.y, final.z))
+
     for a, b in loop_ranges:
         dests = []
         for i in range(a, b):
@@ -979,12 +1330,12 @@ def build_extrude_move_cut_mesh(
             d = directions[i]
             if d.length < 1e-12 or max_travel[i] < 1e-12:
                 dests.append(Vector((p.x, p.y, 0.0)))
-                matched[i].co = Vector((p.x, p.y, height))
+                _set_rim(i, p)
                 continue
             start = Vector((p.x, p.y, body_h))
             final = start + d * max_travel[i]
             dests.append(Vector((final.x, final.y, 0.0)))
-            matched[i].co = Vector((final.x, final.y, height))
+            _set_rim(i, final, max_travel[i])
         dests = smooth_poly(dests, iters=1)
         for k, i in enumerate(range(a, b)):
             d = directions[i]
@@ -995,12 +1346,37 @@ def build_extrude_move_cut_mesh(
             target = Vector((dests[k].x, dests[k].y, height))
             proj = max(0.0, (target - start).dot(d))
             max_travel[i] = min(max_travel[i], proj)
-            matched[i].co = Vector((dests[k].x, dests[k].y, height))
+            _set_rim(i, dests[k], max_travel[i])
 
-    # Ouvrir le haut
-    top_cap = _top_faces(bm)
+    if not flatten_top:
+        # Lisse le travel avant crossings, casse les pics Z aux pointes
+        max_travel[:] = _smooth_cyclic_values(max_travel, loop_ranges, iters=2)
+        for i, v in enumerate(matched):
+            p = outer_pts[i]
+            d = directions[i]
+            if d.length < 1e-12 or max_travel[i] < 1e-12:
+                v.co = Vector((p.x, p.y, body_h))
+                continue
+            start = Vector((p.x, p.y, body_h))
+            v.co = (start + d * max_travel[i]).copy()
+        despike_rim_heights(matched, loop_ranges, iters=3)
+
+    # Ouvrir le haut (faces du plateau) avant resolve/close
+    matched_set = set(matched)
+    top_cap = [f for f in bm.faces if all(v in matched_set for v in f.verts)]
+    if not top_cap:
+        # Filet de sécurité si des sommets intérieurs existent encore
+        top_cap = _top_faces(bm, z_eps=1e-4)
     if top_cap:
+        top_verts = {v for f in top_cap for v in f.verts}
         bmesh.ops.delete(bm, geom=list(top_cap), context="FACES")
+        orphans = [
+            v
+            for v in top_verts
+            if v.is_valid and v not in matched_set and not v.link_faces
+        ]
+        if orphans:
+            bmesh.ops.delete(bm, geom=orphans, context="VERTS")
     bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
 
     hits_before, _tmp = find_open_mesh_crossings(bm, z_min=body_h)
@@ -1015,6 +1391,7 @@ def build_extrude_move_cut_mesh(
         directions=directions,
         height=height,
         body_h=body_h,
+        flatten_top=flatten_top,
         loop_ranges=loop_ranges,
     )
     z_hits = [h["z"] for h in hits]
@@ -1043,12 +1420,10 @@ def build_extrude_move_cut_mesh(
             idx += 1
         region_rims.append({"outer": outer_v, "holes": hole_vs})
 
-    n_top = close_regions_top(bm, region_rims, height, merge_dist=1e-4)
-    top = [v for v in bm.verts if abs(v.co.z - height) < 1e-3]
-    if top:
-        bmesh.ops.remove_doubles(bm, verts=top, dist=5e-4)
+    n_top = close_regions_top(bm, region_rims, merge_dist=5e-4)
+    # Ne plus toucher aux refs `matched` / `region_rims` : remove_doubles les invalide.
     bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
-    print(f"[dice_maker bevel] top faces created≈{n_top}")
+    print(f"[dice_maker bevel] top faces created≈{n_top} flatten_top={flatten_top}")
 
     solid_me = bpy.data.meshes.new("dm-bevel-solid")
     bm.to_mesh(solid_me)
@@ -1083,6 +1458,7 @@ def build_extrude_move_cut_mesh(
         "base_height": body_h,
         "bevel_height": bh,
         "angle": ang_deg,
+        "flatten_top": flatten_top,
         "vert_drop": bh,
         "body_h": body_h,
         "boundary": boundary,
@@ -1137,6 +1513,7 @@ def build_beveled_volume(
     angle=45.0,
     bevel_height=0.2,
     resolution=256,
+    flatten_top=True,
 ):
     """Construit le volume bevel. Retourne (volume_obj, info)."""
     if src is None or src.type != "CURVE":
@@ -1173,6 +1550,7 @@ def build_beveled_volume(
             base_height=base_height,
             angle=angle,
             bevel_height=bevel_height,
+            flatten_top=flatten_top,
         )
         volume = write_volume_object(me, names["volume"])
         hits_bm = info.pop("hits_bm", None)
@@ -1255,6 +1633,15 @@ class DiceMakerBevelProperties(PropertyGroup):
         min=32,
         max=1024,
     )
+    flatten_top: BoolProperty(
+        name="Flatten Top",
+        description=(
+            "Si activé : plateau forcé à Base+Bevel height même si le travel "
+            "est réduit (pinch/crossings). "
+            "Si désactivé : le Z suit la pente — les points limités restent plus bas."
+        ),
+        default=True,
+    )
 
 
 class DICE_MAKER_OT_test_bevel_volume(Operator):
@@ -1289,6 +1676,7 @@ class DICE_MAKER_OT_test_bevel_volume(Operator):
                 angle=float(props.angle),
                 bevel_height=props.bevel_height,
                 resolution=props.resolution,
+                flatten_top=props.flatten_top,
             )
         except Exception as exc:
             import traceback
@@ -1353,6 +1741,7 @@ class DICE_MAKER_PT_bevel_test(Panel):
         layout.prop(props, "angle")
         layout.prop(props, "bevel_height")
         layout.prop(props, "resolution")
+        layout.prop(props, "flatten_top")
         layout.separator()
         layout.operator(
             "dice_maker.test_bevel_volume",
