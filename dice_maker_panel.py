@@ -156,6 +156,16 @@ class DiceMakerProperties(PropertyGroup):
         description="Obtenir les dessins à imprimer",
         default=False
     )
+
+    # Orientation coin pour impression résine
+    resin_orient: BoolProperty(
+        name="Resin Print Orient",
+        description=(
+            "Pose le dé sur un coin (diagonale d'espace alignée sur Z) : "
+            "les 3 faces du bas ont le même angle (~54.7°) par rapport au plateau"
+        ),
+        default=False,
+    )
     
     # Taille globale du dé (arête) — toute la géométrie est construite à cette échelle
     size: FloatProperty(
@@ -317,6 +327,9 @@ class DICE_MAKER_PT_panel(Panel):
         sub = box.column()
         sub.enabled = props.print_drawings
         sub.prop(props, "dice_face_height", text="Face Height %")
+
+        layout.separator()
+        layout.prop(props, "resin_orient", text="Resin Print Orient")
 
         layout.separator()
 

@@ -169,15 +169,21 @@ class DICE_MAKER_OT_create_dice(Operator):
             ui.progress_update(step, "Dice Maker : arrondi appliqué")
 
             ui.refresh_ui("Dice Maker : organisation…")
+            if props.resin_orient:
+                dice_maker_svg.orient_for_resin_print(context, cube)
             dice_maker_svg.organize_objects_on_x_axis(
-                context, cube, print_copies, place_on_ground=props.print_drawings
+                context,
+                cube,
+                print_copies,
+                place_on_ground=props.print_drawings or props.resin_orient,
             )
             ui.progress_update(total_steps, "Dice Maker : terminé")
 
+            orient_note = ", résine coin" if props.resin_orient else ""
             self.report(
                 {'INFO'},
                 f"Dé créé: {dice_name} ({len(imported_objects)} SVG, "
-                f"size={cube_size:.3f})",
+                f"size={cube_size:.3f}{orient_note})",
             )
             return {'FINISHED'}
         finally:

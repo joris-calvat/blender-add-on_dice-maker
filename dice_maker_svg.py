@@ -448,6 +448,40 @@ def apply_size_factor_to_objects(context, dice_obj, print_copies, size_factor):
         copy_obj.select_set(False)
 
 
+def _mesh_min_z_local(obj):
+    """Z local minimal du mesh (après apply, rotation = 0)."""
+    if obj.type != "MESH" or not obj.data.vertices:
+        return 0.0
+    return min(v.co.z for v in obj.data.vertices)
+
+
+def _place_object_on_ground(obj):
+    """Pose l'objet pour que le point le plus bas du mesh soit à z=0 monde."""
+    obj.location.z = -_mesh_min_z_local(obj)
+
+
+def orient_for_resin_print(context, dice_obj):
+    """Pose le dé sur un coin, faces également inclinées, prêt pour la résine.
+
+    Aligne la diagonale d'espace du cube sur -Z (sommet vers le plateau).
+    Les 3 faces adjacentes ont alors le même angle avec le plateau
+    (arccos(1/√3) ≈ 54.74°), contrairement à un simple 45°/45°.
+    """
+    if dice_obj is None:
+        return
+
+    dice_obj.select_set(True)
+    context.view_layer.objects.active = dice_obj
+
+    # Coin (-X,-Y,-Z) → bas ; le twist autour de Z est fixé par rotation_difference
+    corner = Vector((-1.0, -1.0, -1.0))
+    quat = corner.normalized().rotation_difference(Vector((0.0, 0.0, -1.0)))
+    dice_obj.rotation_euler = quat.to_euler("XYZ")
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+    _place_object_on_ground(dice_obj)
+    dice_obj.select_set(False)
+
+
 def organize_objects_on_x_axis(context, dice_obj, print_copies, spacing=0.1, place_on_ground=False):
     """
     Organise les objets sur l'axe X : le dé d'abord, puis les copies d'impression avec espacement.
@@ -466,37 +500,28 @@ def organize_objects_on_x_axis(context, dice_obj, print_copies, spacing=0.1, pla
     if dice_obj:
         dice_obj.location.x = current_x
         # Calculer la taille du dé sur l'axe X (bounding box)
+        context.view_layer.update()
         bbox_corners = [dice_obj.matrix_world @ Vector(corner) for corner in dice_obj.bound_box]
         x_coords = [corner.x for corner in bbox_corners]
         dice_width = max(x_coords) - min(x_coords)
         current_x = dice_width / 2.0 + spacing
         
-        # Placer le dé au sol si demandé
         if place_on_ground:
-            # Calculer le point le plus bas du dé
-            z_coords = [corner.z for corner in bbox_corners]
-            min_z = min(z_coords)
-            # Ajuster la position Z pour que le point le plus bas soit à z=0
-            dice_obj.location.z = -min_z
-    
+            _place_object_on_ground(dice_obj)
+
     # Placer les copies d'impression après le dé
     for copy_obj in print_copies:
-        # Calculer la taille de la copie sur l'axe X
+        context.view_layer.update()
         bbox_corners = [copy_obj.matrix_world @ Vector(corner) for corner in copy_obj.bound_box]
         x_coords = [corner.x for corner in bbox_corners]
         copy_width = max(x_coords) - min(x_coords)
-        
+
         # Positionner la copie : centre + moitié de sa largeur + espacement
         copy_obj.location.x = current_x + copy_width / 2.0
-        
-        # Placer la copie au sol si demandé
+
         if place_on_ground:
-            # Calculer le point le plus bas de la copie
-            z_coords = [corner.z for corner in bbox_corners]
-            min_z = min(z_coords)
-            # Ajuster la position Z pour que le point le plus bas soit à z=0
-            copy_obj.location.z = -min_z
-        
+            _place_object_on_ground(copy_obj)
+
         # Mettre à jour la position X pour l'objet suivant
         current_x += copy_width + spacing
 
