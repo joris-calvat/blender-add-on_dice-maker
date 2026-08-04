@@ -168,6 +168,49 @@ def _face_resolution_to_contour(resolution):
     return max(48, min(1024, int(resolution) * 32))
 
 
+def _recenter_mesh_xy(obj):
+    """Place le centre de la bbox XY du mesh à l'origine."""
+    if obj is None or obj.type != "MESH" or not obj.data.vertices:
+        return
+    xs = [v.co.x for v in obj.data.vertices]
+    ys = [v.co.y for v in obj.data.vertices]
+    ox = 0.5 * (min(xs) + max(xs))
+    oy = 0.5 * (min(ys) + max(ys))
+    if abs(ox) < 1e-12 and abs(oy) < 1e-12:
+        return
+    for v in obj.data.vertices:
+        v.co.x -= ox
+        v.co.y -= oy
+    obj.data.update()
+
+
+def _rotate_mesh_in_plane(obj, degrees):
+    """Tourne le mesh autour de Z, pivot = centre de la bbox XY, puis recentre.
+
+    Évite le décentrage quand le volume bevel n'est pas exactement à l'origine
+    (formes asymétriques) ou après une rotation non multiple de 90°.
+    """
+    if obj is None or obj.type != "MESH" or not obj.data.vertices:
+        return
+
+    # Sens UI opposé au sens mathématique (90° UI → −90° appliqué)
+    angle = -math.radians(float(degrees))
+    if abs(angle) >= 1e-12:
+        xs = [v.co.x for v in obj.data.vertices]
+        ys = [v.co.y for v in obj.data.vertices]
+        cx = 0.5 * (min(xs) + max(xs))
+        cy = 0.5 * (min(ys) + max(ys))
+        c = math.cos(angle)
+        s = math.sin(angle)
+        for v in obj.data.vertices:
+            x = v.co.x - cx
+            y = v.co.y - cy
+            v.co.x = c * x - s * y
+            v.co.y = s * x + c * y
+
+    _recenter_mesh_xy(obj)
+
+
 def _preprocess_imported_curve(context, obj, final_size, resolution):
     """Prépare la CURVE SVG (origine, taille, résolution) sans la convertir en mesh."""
     obj.select_set(True)
@@ -295,6 +338,7 @@ def import_svg(
     angle,
     bevel_height,
     flatten_top=True,
+    rotation_deg=0,
 ):
     """
     Importe un SVG, construit le volume bevel, retourne le cutter MESH.
@@ -342,6 +386,8 @@ def import_svg(
             contour_resolution=contour_res,
             flatten_top=flatten_top,
         )
+        # Rotation in-plane sur le mesh (évite de casser les courbes 2D SVG)
+        _rotate_mesh_in_plane(volume, rotation_deg)
         return volume
     except Exception as e:
         raise Exception(f"Erreur lors de l'import de {abs_filepath}: {str(e)}")
@@ -548,6 +594,7 @@ def import_all_svgs(
     cube_size,
     resolutions,
     flatten_tops=None,
+    rotations=None,
     *,
     base_height,
     angle,
@@ -563,6 +610,8 @@ def import_all_svgs(
     errors = []
     if flatten_tops is None:
         flatten_tops = [True] * len(svg_files)
+    if rotations is None:
+        rotations = [0] * len(svg_files)
 
     for i, svg_file in enumerate(svg_files):
         if svg_file:
@@ -571,6 +620,7 @@ def import_all_svgs(
                 size_factor = size_factors[i] if i < len(size_factors) else 0.5
                 resolution = resolutions[i] if i < len(resolutions) else 5
                 flatten_top = flatten_tops[i] if i < len(flatten_tops) else True
+                rotation_deg = int(rotations[i]) if i < len(rotations) else 0
                 obj = import_svg(
                     context,
                     svg_file,
@@ -582,6 +632,7 @@ def import_all_svgs(
                     angle=angle,
                     bevel_height=bevel_height,
                     flatten_top=flatten_top,
+                    rotation_deg=rotation_deg,
                 )
                 if obj:
                     object_name = f"dice_face_{i + 1}"
@@ -594,7 +645,7 @@ def import_all_svgs(
                     )
                     ui.refresh_ui(
                         f"Dice Maker : face {i + 1}/6 — OK "
-                        f"(flatten={flatten_top})"
+                        f"(rot={rotation_deg}°, flatten={flatten_top})"
                     )
                 else:
                     errors.append(

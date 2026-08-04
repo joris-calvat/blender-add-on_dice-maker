@@ -1,6 +1,24 @@
 import bpy
-from bpy.props import StringProperty, FloatProperty, IntProperty, BoolProperty
+from bpy.props import (
+    StringProperty,
+    FloatProperty,
+    IntProperty,
+    BoolProperty,
+    EnumProperty,
+)
 from bpy.types import Panel, PropertyGroup
+
+_FACE_ROTATION_ITEMS = (
+    ("-180", "-180°", "Rotation -180°"),
+    ("-135", "-135°", "Rotation -135°"),
+    ("-90", "-90°", "Rotation -90°"),
+    ("-45", "-45°", "Rotation -45°"),
+    ("0", "0°", "Pas de rotation"),
+    ("45", "45°", "Rotation 45°"),
+    ("90", "90°", "Rotation 90°"),
+    ("135", "135°", "Rotation 135°"),
+    ("180", "180°", "Rotation 180°"),
+)
 
 
 class DiceMakerProperties(PropertyGroup):
@@ -272,6 +290,44 @@ class DiceMakerProperties(PropertyGroup):
         default=True,
     )
 
+    # Rotation in-plane du dessin (avant projection sur le dé)
+    rotation_1: EnumProperty(
+        name="Rotation Face 1",
+        description="Rotation du dessin dans le plan de la face (avant projection)",
+        items=_FACE_ROTATION_ITEMS,
+        default="0",
+    )
+    rotation_2: EnumProperty(
+        name="Rotation Face 2",
+        description="Rotation du dessin dans le plan de la face (avant projection)",
+        items=_FACE_ROTATION_ITEMS,
+        default="0",
+    )
+    rotation_3: EnumProperty(
+        name="Rotation Face 3",
+        description="Rotation du dessin dans le plan de la face (avant projection)",
+        items=_FACE_ROTATION_ITEMS,
+        default="0",
+    )
+    rotation_4: EnumProperty(
+        name="Rotation Face 4",
+        description="Rotation du dessin dans le plan de la face (avant projection)",
+        items=_FACE_ROTATION_ITEMS,
+        default="0",
+    )
+    rotation_5: EnumProperty(
+        name="Rotation Face 5",
+        description="Rotation du dessin dans le plan de la face (avant projection)",
+        items=_FACE_ROTATION_ITEMS,
+        default="0",
+    )
+    rotation_6: EnumProperty(
+        name="Rotation Face 6",
+        description="Rotation du dessin dans le plan de la face (avant projection)",
+        items=_FACE_ROTATION_ITEMS,
+        default="0",
+    )
+
 
 class DICE_MAKER_PT_panel(Panel):
     """Panel principal pour Dice Maker"""
@@ -285,22 +341,67 @@ class DICE_MAKER_PT_panel(Panel):
         layout = self.layout
         props = context.scene.dice_maker_props
 
-        # Sélecteurs de fichiers SVG avec leurs tailles
-        layout.label(text="Files")
+        # Sélecteurs de fichiers SVG avec leurs options par face
+        layout.label(text="Faces")
 
         faces = (
-            ("Front", "svg_file_1", "size_factor_1", "resolution_1", "flatten_top_1"),
-            ("Left", "svg_file_2", "size_factor_2", "resolution_2", "flatten_top_2"),
-            ("Right", "svg_file_3", "size_factor_3", "resolution_3", "flatten_top_3"),
-            ("Top", "svg_file_4", "size_factor_4", "resolution_4", "flatten_top_4"),
-            ("Bottom", "svg_file_5", "size_factor_5", "resolution_5", "flatten_top_5"),
-            ("Back", "svg_file_6", "size_factor_6", "resolution_6", "flatten_top_6"),
+            (
+                "Front",
+                "svg_file_1",
+                "size_factor_1",
+                "resolution_1",
+                "flatten_top_1",
+                "rotation_1",
+            ),
+            (
+                "Left",
+                "svg_file_2",
+                "size_factor_2",
+                "resolution_2",
+                "flatten_top_2",
+                "rotation_2",
+            ),
+            (
+                "Right",
+                "svg_file_3",
+                "size_factor_3",
+                "resolution_3",
+                "flatten_top_3",
+                "rotation_3",
+            ),
+            (
+                "Top",
+                "svg_file_4",
+                "size_factor_4",
+                "resolution_4",
+                "flatten_top_4",
+                "rotation_4",
+            ),
+            (
+                "Bottom",
+                "svg_file_5",
+                "size_factor_5",
+                "resolution_5",
+                "flatten_top_5",
+                "rotation_5",
+            ),
+            (
+                "Back",
+                "svg_file_6",
+                "size_factor_6",
+                "resolution_6",
+                "flatten_top_6",
+                "rotation_6",
+            ),
         )
-        for label, svg_attr, size_attr, res_attr, flat_attr in faces:
-            layout.prop(props, svg_attr, text=label)
-            row = layout.row(align=True)
+        for label, svg_attr, size_attr, res_attr, flat_attr, rot_attr in faces:
+            box = layout.box()
+            box.prop(props, svg_attr, text=label)
+            row = box.row(align=True)
             row.prop(props, size_attr, text="Size")
             row.prop(props, res_attr, text="Resolution")
+            row = box.row(align=True)
+            row.prop(props, rot_attr, text="Rot")
             row.prop(props, flat_attr, text="Flatten Top")
 
         layout.separator()

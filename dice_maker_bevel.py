@@ -108,6 +108,39 @@ def poly_perimeter(poly):
     return sum((poly[(i + 1) % n] - poly[i]).xy.length for i in range(n))
 
 
+def prune_collinear(poly, eps=1e-5):
+    """Retire les sommets colinéaires (garder un polygone simple fermé).
+
+    À haute résolution, trop de points sur un segment droit font perdre le
+    statut « boundary » au CDT : ces sommets deviennent topologiquement
+    intérieurs et sont détruits à l'ouverture du plateau.
+    """
+    n = len(poly)
+    if n < 4:
+        return [Vector((p.x, p.y, 0.0)) for p in poly]
+    out = []
+    for i in range(n):
+        prev = poly[(i - 1) % n]
+        cur = poly[i]
+        nxt = poly[(i + 1) % n]
+        e1 = Vector((cur.x - prev.x, cur.y - prev.y))
+        e2 = Vector((nxt.x - cur.x, nxt.y - cur.y))
+        len1 = e1.length
+        len2 = e2.length
+        if len1 < 1e-12 or len2 < 1e-12:
+            continue
+        # |sin(angle)| ≈ 0 ⇒ colinéaire
+        if abs(e1.x * e2.y - e1.y * e2.x) <= eps * len1 * len2:
+            continue
+        out.append(Vector((cur.x, cur.y, 0.0)))
+    if len(out) < 3:
+        step = max(1, n // 8)
+        return [
+            Vector((poly[i].x, poly[i].y, 0.0)) for i in range(0, n, step)
+        ][: max(3, (n + step - 1) // step)]
+    return out
+
+
 def resample_closed(poly, count):
     """Rééchantillonne un polygone fermé en `count` points (arc-length)."""
     if len(poly) < 3:
@@ -194,7 +227,7 @@ def curve_loops(obj, total_count):
     loops = []
     for L, perim in zip(raw_loops, perims):
         n = max(8, int(round(total_count * perim / total_p)))
-        loops.append(resample_closed(L, n))
+        loops.append(prune_collinear(resample_closed(L, n)))
     return loops
 
 
@@ -1187,24 +1220,42 @@ def build_extrude_move_cut_mesh(
     )
 
     def extrude_up(dz, remove_old_cap):
+        """Extrude le plateau. Retourne {ancien_vert: nouveau_vert}."""
         faces = _top_faces(bm)
         if not faces:
-            return []
+            return {}
         old_faces = list(faces)
+        old_verts = {v for f in old_faces for v in f.verts}
         ret = bmesh.ops.extrude_face_region(bm, geom=old_faces)
+        new_verts = [e for e in ret["geom"] if isinstance(e, bmesh.types.BMVert)]
+        new_set = set(new_verts)
+        mapping = {}
+        for v in old_verts:
+            for e in v.link_edges:
+                other = e.other_vert(v)
+                if other in new_set:
+                    mapping[v] = other
+                    break
         if remove_old_cap:
             bmesh.ops.delete(bm, geom=old_faces, context="FACES")
-        new_verts = [e for e in ret["geom"] if isinstance(e, bmesh.types.BMVert)]
         if dz and new_verts:
             bmesh.ops.translate(bm, verts=new_verts, vec=(0.0, 0.0, dz))
-        return new_verts
+        return mapping
+
+    # Suivi bot → plateau pour ne jamais re-matcher par proximité (fragile)
+    lift = {}
+    for loop in rim_loops:
+        for v in loop["bot"]:
+            lift[v] = v
 
     # Corps sans bevel (peut être 0 → on ne monte que le biseau)
     if body_h > 1e-8:
-        extrude_up(body_h, remove_old_cap=False)
+        m1 = extrude_up(body_h, remove_old_cap=False)
+        lift = {b: m1.get(cur, cur) for b, cur in lift.items()}
     if bh > 1e-8:
         # Si pas de corps, première extrude : garder le fond
-        extrude_up(bh, remove_old_cap=(body_h > 1e-8))
+        m2 = extrude_up(bh, remove_old_cap=(body_h > 1e-8))
+        lift = {b: m2.get(cur, cur) for b, cur in lift.items()}
     elif body_h > 1e-8:
         # Pas de biseau : prisme simple, déjà fermé
         solid_me = bpy.data.meshes.new("dm-bevel-solid")
@@ -1243,39 +1294,20 @@ def build_extrude_move_cut_mesh(
         print(f"[dice_maker bevel] base_only verts={nverts_bm}")
         return solid_me, info
 
-    # Associer chaque point de rim → sommet du plateau
-    top_fs = _top_faces(bm)
-    top_verts = []
-    seen = set()
-    for f in top_fs:
-        for v in f.verts:
-            if v.index not in seen:
-                seen.add(v.index)
-                top_verts.append(v)
-
+    # Plateau = image des bots via les extrudes (pas de nearest-neighbor)
     matched = []
     outer_pts = []
     normals = []
     loop_ranges = []
-    used = set()
     for loop in rim_loops:
         start = len(matched)
-        for p in loop["pts"]:
-            best = None
-            best_d = 1e18
-            for v in top_verts:
-                if v.index in used:
-                    continue
-                d = (v.co.x - p.x) ** 2 + (v.co.y - p.y) ** 2
-                if d < best_d:
-                    best_d = d
-                    best = v
-            if best is None:
-                raise RuntimeError("matching plateau incomplet")
-            used.add(best.index)
-            matched.append(best)
+        for bot_v, p, nrm in zip(loop["bot"], loop["pts"], loop["normals"]):
+            top_v = lift.get(bot_v)
+            if top_v is None or not top_v.is_valid:
+                raise RuntimeError("matching plateau incomplet (extrude)")
+            matched.append(top_v)
             outer_pts.append(Vector((p.x, p.y, 0.0)))
-        normals.extend(loop["normals"])
+            normals.append(nrm)
         loop_ranges.append((start, len(matched)))
 
     n = len(matched)

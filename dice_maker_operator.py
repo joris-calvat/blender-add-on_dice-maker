@@ -4,6 +4,59 @@ from . import dice_maker_svg
 from . import dice_maker_ui as ui
 
 
+def _configure_boolean_mod(mod):
+    """Options Exact pour cutters auto-intersectants (SVG complexes)."""
+    mod.solver = "EXACT"
+    if hasattr(mod, "use_self"):
+        mod.use_self = True
+    if hasattr(mod, "use_hole_tolerant"):
+        mod.use_hole_tolerant = True
+
+
+def _apply_boolean_difference(context, target, cutter, label=""):
+    """DIFFERENCE Exact (self/hole-tolerant) ; si vide → FLOAT ; si encore vide → skip."""
+    mesh_backup = target.data.copy()
+
+    def _restore():
+        old = target.data
+        target.data = mesh_backup.copy()
+        if old and old.users == 0:
+            bpy.data.meshes.remove(old)
+
+    target.select_set(True)
+    context.view_layer.objects.active = target
+    bool_mod = target.modifiers.new(name="Boolean", type="BOOLEAN")
+    bool_mod.operation = "DIFFERENCE"
+    bool_mod.object = cutter
+    _configure_boolean_mod(bool_mod)
+    bpy.ops.object.modifier_apply(modifier=bool_mod.name)
+
+    if len(target.data.vertices) > 0:
+        if mesh_backup.users == 0:
+            bpy.data.meshes.remove(mesh_backup)
+        return True
+
+    print(f"[dice_maker] boolean Exact a vidé le mesh ({label}) — retry FLOAT")
+    _restore()
+
+    bool_mod = target.modifiers.new(name="Boolean", type="BOOLEAN")
+    bool_mod.operation = "DIFFERENCE"
+    bool_mod.object = cutter
+    bool_mod.solver = "FLOAT"
+    bpy.ops.object.modifier_apply(modifier=bool_mod.name)
+
+    if len(target.data.vertices) > 0:
+        if mesh_backup.users == 0:
+            bpy.data.meshes.remove(mesh_backup)
+        return True
+
+    print(f"[dice_maker] boolean FLOAT a aussi échoué ({label}) — face ignorée")
+    _restore()
+    if mesh_backup.users == 0:
+        bpy.data.meshes.remove(mesh_backup)
+    return False
+
+
 class DICE_MAKER_OT_create_dice(Operator):
     """Opérateur pour créer le dé"""
     bl_idname = "dice_maker.create_dice"
@@ -50,6 +103,14 @@ class DICE_MAKER_OT_create_dice(Operator):
             props.flatten_top_5,
             props.flatten_top_6,
         ]
+        rotations = [
+            int(props.rotation_1),
+            int(props.rotation_2),
+            int(props.rotation_3),
+            int(props.rotation_4),
+            int(props.rotation_5),
+            int(props.rotation_6),
+        ]
 
         # Taille finale du dé dès le départ (pas de scale global ensuite)
         # → base_height / bevel_height restent exacts.
@@ -69,6 +130,7 @@ class DICE_MAKER_OT_create_dice(Operator):
                 cube_size,
                 resolutions,
                 flatten_tops,
+                rotations,
                 base_height=props.base_height,
                 angle=float(props.bevel_angle),
                 bevel_height=props.bevel_height,
@@ -122,13 +184,17 @@ class DICE_MAKER_OT_create_dice(Operator):
                 ui.refresh_ui(
                     f"Dice Maker : boolean face {i + 1}/{len(imported_objects)}…"
                 )
-                cube.select_set(True)
-                context.view_layer.objects.active = cube
-
-                bool_mod = cube.modifiers.new(name="Boolean", type='BOOLEAN')
-                bool_mod.operation = 'DIFFERENCE'
-                bool_mod.object = svg_obj
-                bpy.ops.object.modifier_apply(modifier="Boolean")
+                ok = _apply_boolean_difference(
+                    context,
+                    cube,
+                    svg_obj,
+                    label=f"face {i + 1}/{len(imported_objects)}",
+                )
+                if not ok:
+                    self.report(
+                        {"WARNING"},
+                        f"Boolean face {i + 1} a échoué — face ignorée",
+                    )
                 bpy.data.objects.remove(svg_obj, do_unlink=True)
                 step += 1
                 ui.progress_update(
@@ -163,6 +229,7 @@ class DICE_MAKER_OT_create_dice(Operator):
             bool_mod = cube.modifiers.new(name="Boolean", type='BOOLEAN')
             bool_mod.operation = 'INTERSECT'
             bool_mod.object = sphere
+            _configure_boolean_mod(bool_mod)
             bpy.ops.object.modifier_apply(modifier="Boolean")
             bpy.data.objects.remove(sphere, do_unlink=True)
             step += 1
